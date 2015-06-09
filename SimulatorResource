@@ -1,0 +1,11 @@
+API_NAME	=kop_volunteer
+API_KEY		=AIzaSyCW6L-ZazshSY4u70Pbd6afeG_G29TLBEk
+CMD_PORT	=9696
+CMD_HOST	=220.134.85.189
+SIM_ICCID    =12452514253678963254
+APP_PHONES   =*
+CLIENT_ID   =992881316154.apps.googleusercontent.com
+CHAT_PORT	=9797
+CMD_MODE	=99   #0 means infinitely, other number means repeat count, 
+HEARTBEAT	=60   #in seconds
+
