@@ -163,7 +163,165 @@ public class TcpConnectDaemon extends Thread
 	//{
 		//myPostOffice=new1;
 	//}
+
+	public void addDataToOutQ(String msg)
+	{
+		final String outMsg=msg;
+		final Thread toWakeUp=this;
+		getOutDataQ();
+		new Thread(new Runnable(){
+			public void run(){
+				
+				if (outBoundDataDataQ.size() > Q_SIZE){
+					log.warning("Warning : too many msg in my Q");
+					try {
+						outBoundDataDataQ.take();
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+				try {
+					outBoundDataDataQ.put(outMsg);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				//setHasCommand(true);
+				wakeUp4Command();
+			}
+		}).start();
+	}
+	//inbound msg is Qed in the switchBoard who has Hash<String, Vector<String>>
+	//when Qed will be dropped to the new EngineSocket when updateName is called
+
+	boolean socketSendData(String socketData){
+		int iTry = 0;
+		String data=new String(socketData);
+		while (!mySocket.sendText(socketData)){
+			try {
+				Thread.sleep(2000);
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				if (mySocket.isClosed() || iTry++> 10 )
+				{
+					log.info("failed to send :"+data);
+					return false;
+				}
+			}
+		}
+		log.info("sent: " + socketData);
+		return true;
+	}
+
+	boolean sleepForCommand(ArrayList<String> toSend, long milliseconds){
+		try {
+			Thread.sleep(milliseconds);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block 
+			if (hasCommand) {
+				while (outBoundDataDataQ.size() > 0){
+					try {
+					toSend.add(outBoundDataDataQ.take());
+					} catch (InterruptedException e1) {
+						// TODO Auto-generated catch block
+						e1.printStackTrace();
+					}
+				}
+				if (toSend.size() >0)
+				return true;
+			}
+			e.printStackTrace();
+			//break;
+		}
+		return false;
+	}
 	
+	public void sendDataToServer()
+	{
+		//move data to my send poll
+		if (mySocket==null) return;
+		if (!mySocket.isSktConnected() || !mySocket.hasOutStream()) return;
+		ArrayList<String> toSend=new ArrayList<String>();
+		toSend.add(myToken);
+		while (outBoundDataDataQ.size() > 0){
+			try {
+			toSend.add(outBoundDataDataQ.take());
+			} catch (InterruptedException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		}
+		while (mySocket!= null && mySocket.isSktConnected() && mySocket.hasOutStream() )
+				//outBoundDataDataQ.size() > 0)
+		{			
+
+			if (toSend.size() > 0)
+			{
+				String socketData=toSend.remove(0);
+				String msg=socketData;
+				if (socketData.indexOf("<") < 0 )
+					msg=socketData+myToken;
+
+				if (!socketSendData(msg+"$")) break;
+
+				//if (socketData.charAt(0) != '<')
+				//saveDataToDb(socketData);
+				try {
+					System.out.println("Sent at "+new Date().getTime());
+					Thread.sleep(10);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();}
+			}
+			else //no more data for server
+			{
+				if (sleepForCommand(toSend, 500)) continue;
+				//send last token
+				socketSendData(myToken+"$");
+				System.out.println("Sent at "+new Date().getTime());
+				if (sleepForCommand(toSend, 500)) continue;				
+				//mySocket.close(); just break out don't close so that other thread can still use the socket
+				break;
+			}
+		}
+		
+		if (toSend.size()>0){
+			//put them back to Q; need to take of sequence issue
+			for (int i=0; i<toSend.size(); i++){
+				try {
+				outBoundDataDataQ.put(toSend.get(i));
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+			}
+		}
+		toSend.clear();
+		toSend=null;
+	}
+	boolean hasCommand;
+	public void wakeUp4Command()
+	{
+		hasCommand=true;
+		if (writeThread.isAlive())
+		writeThread.interrupt();
+		else
+			startWriteThread();			
+	}
+	Thread writeThread;
+	void startWriteThread()
+	{
+		writeThread=new Thread(){
+			public void run()
+			{
+				sendDataToServer();
+			}
+		};
+		writeThread.start();
+	}
+
 	
 	//------------------------------------------------
 
@@ -199,6 +357,7 @@ public class TcpConnectDaemon extends Thread
 				}
 				if ((new Date()).getTime() > timeEnd) {
 					log.info("No Data from server for 5 secs ");
+					stopFlag=true;
 				break;
 				}
 			}
@@ -238,7 +397,7 @@ public class TcpConnectDaemon extends Thread
 		}
 		else if (acceptedPhones.charAt(0) != '*' && acceptedPhones.indexOf(sender) <0){
 			log.warning(sData + " !!Mismatch data : wrong sender " + sender + " not in " + acceptedPhones);
-			addDataToOutQ("S999<"+mySimIccId+">");
+			socketSendData("S999<"+mySimIccId+">");
 			return;
 		}
 		
@@ -253,7 +412,9 @@ public class TcpConnectDaemon extends Thread
 		
 		if (msg.charAt(1) != '2' && msg.charAt(1)!='3'){
 			try {
-				sleep(10*1000); //only pin or phone change will be return immediately
+				long iSleep=Math.round(Math.random()*1000)%10;
+		    	
+				sleep(iSleep*1000); //only pin or phone change will be return immediately
 			} catch (InterruptedException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -297,11 +458,13 @@ public class TcpConnectDaemon extends Thread
 	    		break;
 	    		
 	    	}
-	    	
-	    	addDataToOutQ(retCode+myToken);
+	    	//addDataToOutQ(retCode+myToken);
+
+	    	socketSendData(retCode+myToken);
 	    	if (inCode==5 && iSuccess==0){
 	    		try {
-					sleep(80*1000);
+	    			long iSleep=Math.round(Math.random()*1000)%50+10;
+					sleep(iSleep*1000);
 				} catch (InterruptedException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -314,136 +477,11 @@ public class TcpConnectDaemon extends Thread
 		
 	}
 	
+	void setHasCommand(boolean T_F)
+	{
+		hasCommand=T_F;
+	}
 	
-	public void addDataToOutQ(String msg)
-	{
-		final String outMsg=msg;
-		getOutDataQ();
-		new Thread(new Runnable(){
-			public void run(){
-				
-		if (outBoundDataDataQ.size() > Q_SIZE){
-			log.warning("Warning : too many msg in my Q");
-			return;
-		}
-		try {
-			outBoundDataDataQ.put(outMsg);
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-			}
-		}).start();
-	}
-	//inbound msg is Qed in the switchBoard who has Hash<String, Vector<String>>
-	//when Qed will be dropped to the new EngineSocket when updateName is called
-
-	boolean socketSendData(String socketData){
-		int iTry = 0;
-		String data=new String(socketData);
-		while (!mySocket.sendText(socketData)){
-			try {
-				Thread.sleep(2000);
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-				if (mySocket.isClosed() || iTry++> 10 )
-				{
-					log.info("failed to send :"+data);
-					return false;
-				}
-			}
-		}
-		log.info("sent: " + socketData);
-		return true;
-	}
-
-	public void sendDataToServer()
-	{
-		//move data to my send poll
-		if (mySocket==null) return;
-		if (!mySocket.isSktConnected() || !mySocket.hasOutStream()) return;
-		ArrayList<String> toSend=new ArrayList<String>();
-		toSend.add(myToken);
-		while (outBoundDataDataQ.size() > 0){
-			try {
-			toSend.add(outBoundDataDataQ.take());
-			} catch (InterruptedException e1) {
-				// TODO Auto-generated catch block
-				e1.printStackTrace();
-			}
-		}
-		boolean trySend=true;
-
-		while (mySocket!= null && mySocket.isSktConnected() && mySocket.hasOutStream() )
-				//outBoundDataDataQ.size() > 0)
-		{			
-
-			if (toSend.size() > 0)
-			{
-				String socketData=toSend.remove(0);
-				String msg=socketData;
-				if (socketData.indexOf("<") < 0 )
-					msg=socketData+myToken;
-
-				if (!socketSendData(msg+"$")) break;
-
-				//if (socketData.charAt(0) != '<')
-				//saveDataToDb(socketData);
-				try {
-					System.out.println("Sent at "+new Date().getTime());
-					Thread.sleep(500);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();}
-			}
-			else //no more data for server
-			{
-				//send last token
-				socketSendData(myToken+"$");
-				try {
-					System.out.println("Sent at "+new Date().getTime());
-					Thread.sleep(500);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-					break;
-				}
-				mySocket.close();
-			}
-		}
-		if (toSend.size()>0){
-			//put them back to Q; need to take of sequence issue
-			for (int i=0; i<toSend.size(); i++){
-				try {
-				outBoundDataDataQ.put(toSend.get(i));
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
-			}
-		}
-		toSend.clear();
-		toSend=null;
-	}
-	boolean hasCommand;
-	public void wakeUp4Command()
-	{
-		hasCommand=true;
-		interrupt();
-	}
-	Thread writeThread;
-	void startWriteThread()
-	{
-		writeThread=new Thread(){
-			public void run()
-			{
-				sendDataToServer();
-			}
-		};
-		writeThread.start();
-	}
-
 	public void setStopFlag(boolean T_F){
 		imDone=!T_F;
 	}
@@ -488,11 +526,14 @@ public class TcpConnectDaemon extends Thread
 				wait30=true;
 				continue;
 			}
-			if (mySocket==null) return;
+			if (mySocket==null) return;			
+			
+
+			startWriteThread();
+
 			stopFlag=false;
 			log.info("daemon connected at " +
 					DateFormat.getTimeInstance().format(new Date()));
-			startWriteThread();
 			while (mySocket.isSktConnected() && mySocket.hasInStream()) {
 				if (stopFlag) break;
 				readAndDispatchData();//readBytes);

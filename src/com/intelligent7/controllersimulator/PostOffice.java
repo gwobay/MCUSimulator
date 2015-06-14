@@ -82,8 +82,13 @@ implements EngineSocket.DataUpdateListener {
 	
 	void broadcastNewIpPort(String criteria) //this is ICCID filtered from other criteria in main server
 	{
-		ArrayBlockingQueue aBox=allMailBoxes.get(criteria);
-		aBox.add("M0-ip-port<000000>$"); //TODO need to read the ip and port in configuration file from main server
+		ArrayBlockingQueue<String> aBox=allMailBoxes.get(criteria);
+		try {
+			aBox.put("M0-ip-port<000000>$");
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} //TODO need to read the ip and port in configuration file from main server
 		String phones=relationBook.get(criteria);
 		if (phones==null) return;
 		String[] terms=phones.split(",");
